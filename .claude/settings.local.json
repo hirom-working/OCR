@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)",
+      "WebSearch",
+      "Bash(uv init:*)",
+      "Bash(brew list:*)",
+      "Bash(uv add:*)",
+      "Bash(cat:*)",
+      "Bash(uv run python:*)",
+      "Bash(ls:*)",
+      "Bash(scp:*)",
+      "Bash(for:*)",
+      "Bash(do)",
+      "Bash(if [ ! -f \"/Users/hirom/Projects/OCR/searchable_pdfs/$f\" ])",
+      "Bash(then)",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(rsync:*)",
+      "Bash(xxd:*)",
+      "Bash(kill:*)",
+      "Bash(lsof:*)",
+      "Bash(pip install:*)",
+      "Bash(open:*)",
+      "Bash(mdfind:*)",
+      "Bash(ollama list:*)",
+      "Bash(uv sync:*)"
+    ]
+  }
+}

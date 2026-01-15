@@ -1,0 +1,11 @@
+[project]
+name = "pdf-ocr"
+version = "0.1.0"
+description = "PDF OCR Pipeline with Scansnap folder monitoring"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "pymupdf>=1.26.7",
+    "watchdog>=4.0.0",
+]
