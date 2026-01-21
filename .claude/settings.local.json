@@ -24,7 +24,14 @@
       "Bash(open:*)",
       "Bash(mdfind:*)",
       "Bash(ollama list:*)",
-      "Bash(uv sync:*)"
+      "Bash(uv sync:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(pgrep:*)",
+      "Bash(brew install:*)",
+      "mcp__ollama__ollama_chat",
+      "mcp__ollama__ollama_list",
+      "mcp__ollama__ollama_generate"
     ]
   }
 }

@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
-"""
-Scansnap Folder Watcher - Automated PDF OCR Pipeline
-
-Workflow:
-1. Watch ~/Scansnap folder for new PDFs
-2. OCR process on pgx02 (GPU)
-3. Extract title/author using Ollama on pgx01
-4. Rename file: "[Author] Title.pdf" or "Title.pdf"
-5. Move to ~/電子図書/
+"""PDF OCR Pipeline - Process single PDF file.
 
 Usage:
-    python watch_scansnap.py          # Start daemon
-    python watch_scansnap.py --once   # Process existing files and exit
+    python process_pdf.py <pdf_path>
+    python process_pdf.py <pdf_path> --dry-run
 """
-
 import argparse
 import json
 import re
@@ -23,14 +14,12 @@ import sys
 import tempfile
 import time
 import unicodedata
+from functools import wraps
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
 
 # Configuration
-SCANSNAP_DIR = Path.home() / "Scansnap"
 OUTPUT_DIR = Path.home() / "電子図書"
 WORK_DIR = Path("/Users/hirom/Projects/OCR/work")
 
@@ -50,12 +39,32 @@ def log(msg: str):
     print(f"[{timestamp}] {msg}", flush=True)
 
 
-def run_ssh(host: str, cmd: str, check: bool = True) -> subprocess.CompletedProcess:
+def retry(max_attempts: int = 3, delay: int = 5):
+    """Decorator for retry logic."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_attempts - 1:
+                        log(f"  Retry {attempt + 1}/{max_attempts}: {e}")
+                        time.sleep(delay)
+            raise last_error
+        return wrapper
+    return decorator
+
+
+def run_ssh(host: str, cmd: str, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
     """Run command on remote server via SSH."""
     full_cmd = f'ssh {host} "{cmd}"'
-    return subprocess.run(full_cmd, shell=True, capture_output=True, text=True, check=check)
+    return subprocess.run(full_cmd, shell=True, capture_output=True, text=True, check=check, timeout=timeout)
 
 
+@retry(max_attempts=3, delay=5)
 def upload_pdf(pdf_path: Path) -> str:
     """Upload PDF to OCR server. Returns remote path."""
     batch_name = pdf_path.stem
@@ -70,7 +79,7 @@ def upload_pdf(pdf_path: Path) -> str:
     expanded_path = result.stdout.strip()
 
     cmd = f'scp "{pdf_path}" "{OCR_HOST}:{expanded_path}/"'
-    subprocess.run(cmd, shell=True, capture_output=True, check=True)
+    subprocess.run(cmd, shell=True, capture_output=True, check=True, timeout=60)
 
     return remote_input
 
@@ -89,10 +98,11 @@ def run_ocr(remote_input: str, batch_name: str) -> str:
         f"surya_ocr {escaped_input} --output_dir {escaped_output}"
     )
 
-    run_ssh(OCR_HOST, ocr_cmd, check=False)
+    run_ssh(OCR_HOST, ocr_cmd, check=False, timeout=300)
     return remote_output
 
 
+@retry(max_attempts=3, delay=5)
 def download_results(remote_output: str, batch_name: str) -> Path:
     """Download OCR results. Returns local results path."""
     local_dir = WORK_DIR / batch_name
@@ -104,7 +114,7 @@ def download_results(remote_output: str, batch_name: str) -> Path:
     expanded_path = result.stdout.strip()
 
     cmd = f'scp -r "{OCR_HOST}:{expanded_path}/"* "{local_dir}/"'
-    subprocess.run(cmd, shell=True, capture_output=True)
+    subprocess.run(cmd, shell=True, capture_output=True, timeout=60)
 
     return local_dir
 
@@ -256,7 +266,7 @@ JSONのみで回答（説明不要）:
 
         # Transfer and execute
         remote_payload = f"/tmp/ollama_payload_{int(time.time())}.json"
-        subprocess.run(f'scp "{local_payload}" {OLLAMA_HOST}:{remote_payload}', shell=True, capture_output=True)
+        subprocess.run(f'scp "{local_payload}" {OLLAMA_HOST}:{remote_payload}', shell=True, capture_output=True, timeout=30)
         local_payload.unlink()
 
         cmd = f'ssh {OLLAMA_HOST} "curl -s http://localhost:11434/api/generate -d @{remote_payload} && rm {remote_payload}"'
@@ -313,10 +323,19 @@ def cleanup(batch_name: str, local_dir: Path):
         shutil.rmtree(local_dir)
 
 
-def process_pdf(pdf_path: Path) -> bool:
+def process_pdf(pdf_path: Path, dry_run: bool = False) -> bool:
     """Process a single PDF through the full pipeline."""
     batch_name = pdf_path.stem
     log(f"Processing: {pdf_path.name}")
+
+    if dry_run:
+        log("  [DRY RUN] Would upload to OCR server")
+        log("  [DRY RUN] Would run OCR")
+        log("  [DRY RUN] Would download results")
+        log("  [DRY RUN] Would apply OCR text layer")
+        log("  [DRY RUN] Would extract title/author")
+        log("  [DRY RUN] Would move to output directory")
+        return True
 
     try:
         # Step 1: Upload to OCR server
@@ -378,92 +397,28 @@ def process_pdf(pdf_path: Path) -> bool:
         return False
 
 
-class ScanSnapHandler(FileSystemEventHandler):
-    """Handler for new PDF files in Scansnap folder."""
-
-    def __init__(self):
-        self.processing = set()
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-
-        path = Path(event.src_path)
-        if path.suffix.lower() != ".pdf":
-            return
-
-        if path.name in self.processing:
-            return
-
-        # Wait for file to be fully written
-        self.processing.add(path.name)
-        time.sleep(2)
-
-        # Check file is stable (not being written)
-        prev_size = -1
-        while True:
-            try:
-                curr_size = path.stat().st_size
-                if curr_size == prev_size:
-                    break
-                prev_size = curr_size
-                time.sleep(1)
-            except FileNotFoundError:
-                self.processing.discard(path.name)
-                return
-
-        process_pdf(path)
-        self.processing.discard(path.name)
-
-
-def process_existing():
-    """Process all existing PDFs in Scansnap folder."""
-    pdfs = list(SCANSNAP_DIR.glob("*.pdf"))
-    if not pdfs:
-        log("No PDFs found in Scansnap folder")
-        return
-
-    log(f"Found {len(pdfs)} PDFs to process")
-    for pdf_path in pdfs:
-        process_pdf(pdf_path)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Scansnap Folder Watcher")
-    parser.add_argument("--once", action="store_true", help="Process existing files and exit")
+    parser = argparse.ArgumentParser(description="Process PDF with OCR Pipeline")
+    parser.add_argument("pdf_path", help="Path to the PDF file")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would happen without processing")
 
     args = parser.parse_args()
 
+    pdf_path = Path(args.pdf_path).resolve()
+    if not pdf_path.exists():
+        log(f"Error: File not found: {pdf_path}")
+        sys.exit(1)
+
+    if not pdf_path.suffix.lower() == ".pdf":
+        log(f"Error: Not a PDF file: {pdf_path}")
+        sys.exit(1)
+
     # Ensure directories exist
-    SCANSNAP_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
 
-    if args.once:
-        process_existing()
-        return
-
-    # Process existing files first
-    process_existing()
-
-    # Start watching
-    log(f"Watching: {SCANSNAP_DIR}")
-    log(f"Output: {OUTPUT_DIR}")
-    log("Press Ctrl+C to stop")
-
-    event_handler = ScanSnapHandler()
-    observer = Observer()
-    observer.schedule(event_handler, str(SCANSNAP_DIR), recursive=False)
-    observer.start()
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-        log("Stopped")
-
-    observer.join()
+    success = process_pdf(pdf_path, args.dry_run)
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
