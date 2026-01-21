@@ -1,0 +1,24 @@
+# OCR Pipeline Configuration
+# Copy this file to config.toml and customize for your environment
+
+[local]
+# Local client directories
+output_dir = "~/電子図書"
+work_dir = "~/Projects/OCR/work"
+
+[ocr_server]
+# OCR Server configuration (remote host running Surya)
+host = "pgx02"
+surya_dir = "~/surya-ocr"
+input_dir = "~/ocr_watch_input"
+output_dir = "~/ocr_watch_output"
+
+[pipeline]
+# Batch pipeline directories on remote host (same host as ocr_server)
+input_dir = "~/ocr_pipeline_input"
+output_dir = "~/ocr_pipeline_output"
+
+[ollama]
+# Ollama LLM server configuration (for filename generation)
+host = "pgx01"
+model = "gemma3:27b"

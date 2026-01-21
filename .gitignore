@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local configuration (use config.example.toml as template)
+config.toml
+
+# Logs
+*.log
+
+# Claude Code local settings
+.claude/
+
+# Personal launchd plist (use com.example.scansnap-watcher.plist as template)
+com.*.scansnap-watcher.plist
+!com.example.scansnap-watcher.plist

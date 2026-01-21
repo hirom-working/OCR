@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.hirom.scansnap-watcher</string>
+	<string>com.yourname.scansnap-watcher</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/hirom/Projects/OCR/watch_scansnap.sh</string>
+		<string>/Users/yourname/Projects/OCR/watch_scansnap.sh</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 	<key>StandardOutPath</key>
-	<string>/Users/hirom/Library/Logs/scansnap_watcher.log</string>
+	<string>/Users/yourname/Library/Logs/scansnap_watcher.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/hirom/Library/Logs/scansnap_watcher.log</string>
+	<string>/Users/yourname/Library/Logs/scansnap_watcher.log</string>
 	<key>WorkingDirectory</key>
-	<string>/Users/hirom/Projects/OCR</string>
+	<string>/Users/yourname/Projects/OCR</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>

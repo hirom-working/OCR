@@ -19,18 +19,20 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-# Configuration
-OUTPUT_DIR = Path.home() / "電子図書"
-WORK_DIR = Path("/Users/hirom/Projects/OCR/work")
+from config import config
+
+# Configuration (loaded from config.toml)
+OUTPUT_DIR = config.local.output_dir
+WORK_DIR = config.local.work_dir
 
 # Remote servers
-OCR_HOST = "pgx02"
-OLLAMA_HOST = "pgx01"
-OLLAMA_MODEL = "gemma3:27b"
+OCR_HOST = config.ocr_server.host
+OLLAMA_HOST = config.ollama.host
+OLLAMA_MODEL = config.ollama.model
 
-REMOTE_SURYA_DIR = "~/surya-ocr"
-REMOTE_INPUT_DIR = "~/ocr_watch_input"
-REMOTE_OUTPUT_DIR = "~/ocr_watch_output"
+REMOTE_SURYA_DIR = config.ocr_server.surya_dir
+REMOTE_INPUT_DIR = config.ocr_server.input_dir
+REMOTE_OUTPUT_DIR = config.ocr_server.output_dir
 
 
 def log(msg: str):

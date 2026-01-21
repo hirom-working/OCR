@@ -29,11 +29,13 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-# Configuration
-REMOTE_HOST = "pgx02"
-REMOTE_SURYA_DIR = "~/surya-ocr"
-REMOTE_INPUT_DIR = "~/ocr_pipeline_input"
-REMOTE_OUTPUT_DIR = "~/ocr_pipeline_output"
+from config import config
+
+# Configuration (loaded from config.toml)
+REMOTE_HOST = config.ocr_server.host
+REMOTE_SURYA_DIR = config.ocr_server.surya_dir
+REMOTE_INPUT_DIR = config.pipeline.input_dir
+REMOTE_OUTPUT_DIR = config.pipeline.output_dir
 
 
 def run_ssh(cmd: str, check: bool = True) -> subprocess.CompletedProcess:
