@@ -21,6 +21,7 @@ class LocalConfig:
     """Local client settings."""
     output_dir: Path
     work_dir: Path
+    scansnap_dir: Path
 
 
 @dataclass(frozen=True)
@@ -31,9 +32,15 @@ class OcrServerConfig:
     and will be expanded on the remote server.
     """
     host: str
-    surya_dir: str
+    venv_path: str
     input_dir: str
     output_dir: str
+
+
+@dataclass(frozen=True)
+class CategoriesConfig:
+    """Document categories for classification."""
+    folders: list[str]
 
 
 @dataclass(frozen=True)
@@ -47,10 +54,25 @@ class PipelineConfig:
 
 
 @dataclass(frozen=True)
-class OllamaConfig:
-    """Ollama LLM server settings."""
+class LLMConfig:
+    """LLM server settings (vLLM or Ollama)."""
+    backend: str  # "vllm" or "ollama"
     host: str
+    port: int
     model: str
+
+    @property
+    def base_url(self) -> str:
+        """Get the base URL for the LLM API."""
+        return f"http://{self.host}:{self.port}"
+
+    @property
+    def chat_endpoint(self) -> str:
+        """Get the chat completion endpoint."""
+        if self.backend == "vllm":
+            return f"{self.base_url}/v1/chat/completions"
+        else:
+            return f"{self.base_url}/api/generate"
 
 
 @dataclass(frozen=True)
@@ -59,7 +81,8 @@ class Config:
     local: LocalConfig
     ocr_server: OcrServerConfig
     pipeline: PipelineConfig
-    ollama: OllamaConfig
+    llm: LLMConfig
+    categories: CategoriesConfig
 
 
 def load_config() -> Config:
@@ -95,16 +118,19 @@ def _parse_config(data: dict) -> Config:
     local_section = data.get("local", {})
     ocr_server_section = data.get("ocr_server", {})
     pipeline_section = data.get("pipeline", {})
-    ollama_section = data.get("ollama", {})
+    llm_section = data.get("llm", {})
+    categories_section = data.get("categories", {})
+
 
     return Config(
         local=LocalConfig(
             output_dir=_expand_local_path(local_section.get("output_dir", "~/電子図書")),
             work_dir=_expand_local_path(local_section.get("work_dir", "~/Projects/OCR/work")),
+            scansnap_dir=_expand_local_path(local_section.get("scansnap_dir", "~/Scansnap")),
         ),
         ocr_server=OcrServerConfig(
             host=ocr_server_section.get("host", "pgx02"),
-            surya_dir=ocr_server_section.get("surya_dir", "~/surya-ocr"),
+            venv_path=ocr_server_section.get("venv_path", "~/Projects/.venv"),
             input_dir=ocr_server_section.get("input_dir", "~/ocr_watch_input"),
             output_dir=ocr_server_section.get("output_dir", "~/ocr_watch_output"),
         ),
@@ -112,9 +138,14 @@ def _parse_config(data: dict) -> Config:
             input_dir=pipeline_section.get("input_dir", "~/ocr_pipeline_input"),
             output_dir=pipeline_section.get("output_dir", "~/ocr_pipeline_output"),
         ),
-        ollama=OllamaConfig(
-            host=ollama_section.get("host", "pgx01"),
-            model=ollama_section.get("model", "gemma3:27b"),
+        llm=LLMConfig(
+            backend=llm_section.get("backend", "vllm"),
+            host=llm_section.get("host", "pgx01"),
+            port=llm_section.get("port", 8000),
+            model=llm_section.get("model", "gemma3-27b"),
+        ),
+        categories=CategoriesConfig(
+            folders=categories_section.get("folders", ["その他"]),
         ),
     )
 

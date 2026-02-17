@@ -18,7 +18,16 @@ output_dir = "~/ocr_watch_output"
 input_dir = "~/ocr_pipeline_input"
 output_dir = "~/ocr_pipeline_output"
 
-[ollama]
-# Ollama LLM server configuration (for filename generation)
-host = "pgx01"
-model = "gemma3:27b"
+[llm]
+# LLM server configuration (for filename generation)
+# backend: "vllm" or "ollama"
+backend = "vllm"
+host = "pgx02"
+port = 8000
+model = "gemma27b"
+
+# Legacy Ollama configuration (for backward compatibility)
+# If you want to use Ollama instead of vLLM, use:
+# [ollama]
+# host = "pgx01"
+# model = "gemma3:27b"

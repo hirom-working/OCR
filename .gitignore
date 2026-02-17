@@ -21,3 +21,7 @@ config.toml
 # Personal launchd plist (use com.example.scansnap-watcher.plist as template)
 com.*.scansnap-watcher.plist
 !com.example.scansnap-watcher.plist
+
+# OCR output and test data
+gcv_output/
+test_yomitoku/
