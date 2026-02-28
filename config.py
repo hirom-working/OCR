@@ -55,8 +55,8 @@ class PipelineConfig:
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """LLM server settings (vLLM or Ollama)."""
-    backend: str  # "vllm" or "ollama"
+    """LLM server settings (llama.cpp, vLLM, or Ollama)."""
+    backend: str  # "llama-cpp", "vllm", or "ollama"
     host: str
     port: int
     model: str
@@ -69,7 +69,7 @@ class LLMConfig:
     @property
     def chat_endpoint(self) -> str:
         """Get the chat completion endpoint."""
-        if self.backend == "vllm":
+        if self.backend in ("vllm", "llama-cpp"):
             return f"{self.base_url}/v1/chat/completions"
         else:
             return f"{self.base_url}/api/generate"

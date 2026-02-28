@@ -4,7 +4,7 @@
 Workflow:
 1. Run Yomitoku OCR on remote GPU server (pgx02)
 2. Create searchable PDF with invisible text layer
-3. Use LLM (Gemma3 on pgx01) to extract title/author and classify category
+3. Use LLM (Qwen3.5 on pgx01) to extract title/author and classify category
 4. Rename and move to appropriate category folder
 
 Usage:
@@ -262,29 +262,20 @@ def classify_document(text_sample: str, original_filename: str) -> tuple[str | N
 {text_sample}"""
 
     try:
-        # Call vLLM API on remote server (OpenAI-compatible)
-        api_payload = json.dumps({
-            "model": LLM_CONFIG.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
-        })
+        import httpx
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(api_payload)
-            local_payload = Path(f.name)
-
-        remote_payload = f"/tmp/llm_payload_{int(time.time())}.json"
-        subprocess.run(
-            f'scp "{local_payload}" {LLM_CONFIG.host}:{remote_payload}',
-            shell=True, capture_output=True, timeout=30
+        response = httpx.post(
+            LLM_CONFIG.chat_endpoint,
+            json={
+                "model": LLM_CONFIG.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 500,
+            },
+            timeout=300,
         )
-        local_payload.unlink()
+        response.raise_for_status()
 
-        endpoint = f"http://localhost:{LLM_CONFIG.port}/v1/chat/completions"
-        cmd = f'ssh {LLM_CONFIG.host} "curl -s {endpoint} -H \'Content-Type: application/json\' -d @{remote_payload} && rm {remote_payload}"'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
-
-        response_data = json.loads(result.stdout)
+        response_data = response.json()
         response_text = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
         log(f"  LLM response: {response_text}")
 
