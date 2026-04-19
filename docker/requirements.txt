@@ -3,4 +3,4 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 pypdfium2>=4.0.0
 opencv-python>=4.0.0
-yomitoku==0.12.1
+yomitoku @ git+https://github.com/kotaro-kinoshita/yomitoku.git@v0.12.1
