@@ -10,8 +10,13 @@
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
-	<key>KeepAlive</key>
-	<true/>
+	<key>WatchPaths</key>
+	<array>
+		<string>/Users/yourname/Scansnap</string>
+		<string>/Users/yourname/Scansnap-OCRed</string>
+	</array>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
 	<key>StandardOutPath</key>
 	<string>/Users/yourname/Library/Logs/scansnap_watcher.log</string>
 	<key>StandardErrorPath</key>
