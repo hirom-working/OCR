@@ -25,19 +25,6 @@ class LocalConfig:
 
 
 @dataclass(frozen=True)
-class OcrServerConfig:
-    """OCR Server remote settings.
-
-    Note: Paths are kept as strings since they are remote paths
-    and will be expanded on the remote server.
-    """
-    host: str
-    venv_path: str
-    input_dir: str
-    output_dir: str
-
-
-@dataclass(frozen=True)
 class CategoriesConfig:
     """Document categories for classification."""
     folders: list[str]
@@ -55,31 +42,14 @@ class PipelineConfig:
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """LLM server settings (llama.cpp, vLLM, or Ollama)."""
-    backend: str  # "llama-cpp", "vllm", or "ollama"
-    host: str
-    port: int
+    """Gemini API settings for document classification."""
     model: str
-
-    @property
-    def base_url(self) -> str:
-        """Get the base URL for the LLM API."""
-        return f"http://{self.host}:{self.port}"
-
-    @property
-    def chat_endpoint(self) -> str:
-        """Get the chat completion endpoint."""
-        if self.backend in ("vllm", "llama-cpp"):
-            return f"{self.base_url}/v1/chat/completions"
-        else:
-            return f"{self.base_url}/api/generate"
 
 
 @dataclass(frozen=True)
 class Config:
     """Main configuration object aggregating all sections."""
     local: LocalConfig
-    ocr_server: OcrServerConfig
     pipeline: PipelineConfig
     llm: LLMConfig
     categories: CategoriesConfig
@@ -116,7 +86,6 @@ def load_config() -> Config:
 def _parse_config(data: dict) -> Config:
     """Parse TOML data and construct the Config object."""
     local_section = data.get("local", {})
-    ocr_server_section = data.get("ocr_server", {})
     pipeline_section = data.get("pipeline", {})
     llm_section = data.get("llm", {})
     categories_section = data.get("categories", {})
@@ -128,21 +97,12 @@ def _parse_config(data: dict) -> Config:
             work_dir=_expand_local_path(local_section.get("work_dir", "~/Projects/OCR/work")),
             scansnap_dir=_expand_local_path(local_section.get("scansnap_dir", "~/Scansnap")),
         ),
-        ocr_server=OcrServerConfig(
-            host=ocr_server_section.get("host", "pgx02"),
-            venv_path=ocr_server_section.get("venv_path", "~/Projects/.venv"),
-            input_dir=ocr_server_section.get("input_dir", "~/ocr_watch_input"),
-            output_dir=ocr_server_section.get("output_dir", "~/ocr_watch_output"),
-        ),
         pipeline=PipelineConfig(
             input_dir=pipeline_section.get("input_dir", "~/ocr_pipeline_input"),
             output_dir=pipeline_section.get("output_dir", "~/ocr_pipeline_output"),
         ),
         llm=LLMConfig(
-            backend=llm_section.get("backend", "vllm"),
-            host=llm_section.get("host", "pgx01"),
-            port=llm_section.get("port", 8000),
-            model=llm_section.get("model", "gemma3-27b"),
+            model=llm_section.get("model", "gemini-3.6-flash"),
         ),
         categories=CategoriesConfig(
             folders=categories_section.get("folders", ["その他"]),

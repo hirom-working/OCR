@@ -6,28 +6,12 @@
 output_dir = "~/電子図書"
 work_dir = "~/Projects/OCR/work"
 
-[ocr_server]
-# OCR Server configuration (remote host running Surya)
-host = "pgx02"
-surya_dir = "~/surya-ocr"
-input_dir = "~/ocr_watch_input"
-output_dir = "~/ocr_watch_output"
-
 [pipeline]
-# Batch pipeline directories on remote host (same host as ocr_server)
+# Batch pipeline directories on remote host
 input_dir = "~/ocr_pipeline_input"
 output_dir = "~/ocr_pipeline_output"
 
 [llm]
-# LLM server configuration (for filename generation)
-# backend: "vllm" or "ollama"
-backend = "vllm"
-host = "pgx02"
-port = 8000
-model = "gemma27b"
-
-# Legacy Ollama configuration (for backward compatibility)
-# If you want to use Ollama instead of vLLM, use:
-# [ollama]
-# host = "pgx01"
-# model = "gemma3:27b"
+# Gemini API for title/author/category classification
+# APIキーは1Password (op://Dev/Google-AI-Studio/GEMINI_API_KEY) から実行時に取得
+model = "gemini-3.6-flash"

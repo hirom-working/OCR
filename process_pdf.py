@@ -2,9 +2,9 @@
 """PDF OCR Pipeline - Process single PDF file.
 
 Workflow:
-1. Run Yomitoku OCR on remote GPU server (pgx02)
+1. Run OCR via Google Cloud Vision API (DOCUMENT_TEXT_DETECTION)
 2. Create searchable PDF with invisible text layer
-3. Use LLM (Qwen3.5 on pgx01) to extract title/author and classify category
+3. Use Gemini API to extract title/author and classify category
 4. Rename and move to appropriate category folder
 
 Usage:
@@ -12,6 +12,8 @@ Usage:
     python process_pdf.py <pdf_path> --dry-run
 """
 import argparse
+import base64
+import io
 import json
 import re
 import shutil
@@ -19,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -29,10 +31,10 @@ from config import config
 # Configuration
 OUTPUT_DIR = config.local.output_dir
 WORK_DIR = config.local.work_dir
-OCR_HOST = config.ocr_server.host
-OCR_VENV = config.ocr_server.venv_path
 LLM_CONFIG = config.llm
 CATEGORIES = config.categories.folders
+
+VISION_BATCH_SIZE = 8  # pages per images:annotate request
 
 
 def log(msg: str):
@@ -71,61 +73,83 @@ def normalize_japanese_text(text: str) -> str:
     return text
 
 
+@lru_cache(maxsize=1)
+def _get_vision_api_key() -> str:
+    """Fetch the Cloud Vision API key from 1Password. Never persisted to disk."""
+    result = subprocess.run(
+        ["op", "read", "op://Dev/Google-Cloud-Vision/VISION_API_KEY"],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
+
+
 @retry(max_attempts=3, delay=5)
-def run_yomitoku_ocr(pdf_path: Path) -> list[dict]:
-    """Run Yomitoku OCR on remote server and return JSON results per page."""
-    remote_input = f"/tmp/yomitoku_in_{pdf_path.stem}.pdf"
-    remote_output = f"/tmp/yomitoku_out_{pdf_path.stem}"
+def _annotate_batch(images_b64: list[str]) -> list[dict]:
+    """Call Cloud Vision images:annotate for a batch of page images."""
+    import httpx
 
-    # Upload PDF
-    subprocess.run(
-        ["scp", str(pdf_path), f"{OCR_HOST}:{remote_input}"],
-        check=True, capture_output=True, timeout=600,
+    response = httpx.post(
+        "https://vision.googleapis.com/v1/images:annotate",
+        params={"key": _get_vision_api_key()},
+        json={
+            "requests": [
+                {
+                    "image": {"content": b64},
+                    "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                    "imageContext": {"languageHints": ["ja"]},
+                }
+                for b64 in images_b64
+            ]
+        },
+        timeout=120.0,
     )
+    response.raise_for_status()
+    return response.json().get("responses", [])
 
-    # Run Yomitoku
-    cmd = (
-        f"source {OCR_VENV}/bin/activate && "
-        f"rm -rf {remote_output} && "
-        f"yomitoku {remote_input} -f json -o {remote_output} "
-        f"--reading_order auto --dpi 200"
-    )
-    subprocess.run(
-        ["ssh", OCR_HOST, cmd],
-        capture_output=True, timeout=3600,
-    )
 
-    # Download all JSON files (Yomitoku outputs one per page)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        local_dir = Path(tmpdir) / "results"
-        local_dir.mkdir()
+def _page_to_paragraphs(vision_response: dict) -> list[dict]:
+    """Flatten a Cloud Vision annotate response into paragraph dicts."""
+    if "error" in vision_response:
+        log(f"  Cloud Vision page error: {vision_response['error']}")
+        return []
 
-        subprocess.run(
-            ["scp", "-r", f"{OCR_HOST}:{remote_output}/", str(local_dir)],
-            check=True, capture_output=True, timeout=600,
-        )
+    paragraphs = []
+    for page in vision_response.get("fullTextAnnotation", {}).get("pages", []):
+        for block in page.get("blocks", []):
+            for para in block.get("paragraphs", []):
+                parts = []
+                for word in para.get("words", []):
+                    for symbol in word.get("symbols", []):
+                        parts.append(symbol.get("text", ""))
+                        break_type = symbol.get("property", {}).get("detectedBreak", {}).get("type")
+                        if break_type in ("SPACE", "SURE_SPACE", "EOL_SURE_SPACE", "LINE_BREAK"):
+                            parts.append(" ")
+                text = "".join(parts).strip()
+                if text:
+                    paragraphs.append({"contents": text})
+    return paragraphs
 
-        # Find and sort JSON files by page number
-        json_files = list(local_dir.rglob("*.json"))
 
-        def extract_page_num(f: Path) -> int:
-            """Extract page number from filename like xxx_p123.json"""
-            match = re.search(r'_p(\d+)\.json$', f.name)
-            return int(match.group(1)) if match else 0
+def run_cloud_vision_ocr(pdf_path: Path) -> list[dict]:
+    """Render PDF pages to images and OCR them via Google Cloud Vision."""
+    import pypdfium2 as pdfium
 
-        json_files.sort(key=extract_page_num)
+    pdf = pdfium.PdfDocument(pdf_path)
+    pages_b64 = []
+    for page in pdf:
+        bitmap = page.render(scale=2.0)
+        buf = io.BytesIO()
+        bitmap.to_pil().save(buf, format="PNG")
+        pages_b64.append(base64.b64encode(buf.getvalue()).decode())
+    pdf.close()
 
-        # Load and merge results
-        results = []
-        for jf in json_files:
-            with open(jf, encoding="utf-8") as f:
-                results.append(json.load(f))
-
-    # Cleanup remote
-    subprocess.run(
-        ["ssh", OCR_HOST, f"rm -rf {remote_input} {remote_output}"],
-        capture_output=True,
-    )
+    total_batches = -(-len(pages_b64) // VISION_BATCH_SIZE)
+    results = []
+    for i in range(0, len(pages_b64), VISION_BATCH_SIZE):
+        batch = pages_b64[i:i + VISION_BATCH_SIZE]
+        log(f"  OCR batch {i // VISION_BATCH_SIZE + 1}/{total_batches} ({len(batch)} pages)...")
+        for vision_response in _annotate_batch(batch):
+            results.append({"paragraphs": _page_to_paragraphs(vision_response)})
 
     return results
 
@@ -212,31 +236,19 @@ def extract_text_sample(pdf_path: Path, max_pages: int = 5, max_chars: int = 300
     return "\n\n".join(text_parts)[:max_chars]
 
 
-def _extract_json_from_text(text: str) -> dict | None:
-    """Extract JSON object from LLM response text, handling multiline."""
-    # Try 1: Find first { and last } and parse
-    start = text.find('{')
-    end = text.rfind('}')
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(text[start:end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    # Try 2: Single-line regex fallback
-    json_match = re.search(r'\{[^}]+\}', text)
-    if json_match:
-        try:
-            return json.loads(json_match.group())
-        except json.JSONDecodeError:
-            pass
-
-    return None
+@lru_cache(maxsize=1)
+def _get_gemini_api_key() -> str:
+    """Fetch the Gemini API key from 1Password. Never persisted to disk."""
+    result = subprocess.run(
+        ["op", "read", "op://Dev/Google-AI-Studio/GEMINI_API_KEY"],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
 
 
 def classify_document(text_sample: str, original_filename: str) -> tuple[str | None, str | None, str]:
-    """Use LLM to extract title, author, and classify category."""
-    categories_list = "\n".join(f"- {cat}" for cat in CATEGORIES)
+    """Use Gemini to extract title, author, and classify category."""
+    import httpx
 
     prompt = f"""あなたは書籍・雑誌の分類専門家です。
 スキャンされたPDFから、タイトル、著者、カテゴリを特定してください。
@@ -248,54 +260,46 @@ def classify_document(text_sample: str, original_filename: str) -> tuple[str | N
 2. 書籍: 表紙や奥付から書名を抽出
 3. 著者: 書籍の場合のみ。雑誌や不明な場合はnull
 
-## カテゴリ選択（以下から1つ選択）
-{categories_list}
-
-必ず以下の形式の1行JSONのみで回答してください。他のテキストは含めないでください。
-著者がない場合はnull（ダブルクォートなし）を使用してください。
-
-回答例:
-{{"title": "銀河英雄伝説 第01巻", "author": "田中芳樹", "category": "小説"}}
-{{"title": "ナイフマガジン 1997年8月号", "author": null, "category": "趣味"}}
-
 テキスト:
 {text_sample}"""
 
     try:
-        import httpx
-
         response = httpx.post(
-            LLM_CONFIG.chat_endpoint,
+            f"https://generativelanguage.googleapis.com/v1beta/models/{LLM_CONFIG.model}:generateContent",
+            headers={"x-goog-api-key": _get_gemini_api_key()},
             json={
-                "model": LLM_CONFIG.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500,
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "title": {"type": "STRING", "nullable": True},
+                            "author": {"type": "STRING", "nullable": True},
+                            "category": {"type": "STRING", "enum": CATEGORIES},
+                        },
+                        "required": ["category"],
+                    },
+                },
             },
-            timeout=300,
+            timeout=60,
         )
         response.raise_for_status()
 
-        response_data = response.json()
-        response_text = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        response_text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
         log(f"  LLM response: {response_text}")
 
-        # Extract JSON from response
-        data = _extract_json_from_text(response_text)
-        if data:
-            title = data.get("title")
-            author = data.get("author")
-            category = data.get("category", "その他")
+        data = json.loads(response_text)
+        title = data.get("title")
+        author = data.get("author")
+        category = data.get("category", "その他")
 
-            if author in [None, "null", "NULL", "", "不明", "unknown", "N/A"]:
-                author = None
+        if author in [None, "null", "", "不明", "unknown"]:
+            author = None
+        if category not in CATEGORIES:
+            category = "その他"
 
-            # Validate category
-            if category not in CATEGORIES:
-                category = "その他"
-
-            return title, author, category
-
-        log(f"  JSON parse failed. Raw response: {response_text}")
+        return title, author, category
 
     except Exception as e:
         log(f"  LLM error: {e}")
@@ -324,31 +328,37 @@ def generate_filename(title: str | None, author: str | None, original_name: str)
         return f"{title}.pdf"
 
 
-def process_pdf(pdf_path: Path, dry_run: bool = False) -> bool:
+def process_pdf(pdf_path: Path, dry_run: bool = False, skip_ocr: bool = False) -> bool:
     """Process a single PDF through the full pipeline."""
     log(f"Processing: {pdf_path.name}")
 
     if dry_run:
-        log("  [DRY RUN] Would run Yomitoku OCR")
-        log("  [DRY RUN] Would create searchable PDF")
+        if skip_ocr:
+            log("  [DRY RUN] Would skip OCR (already has text layer)")
+        else:
+            log("  [DRY RUN] Would run Cloud Vision OCR")
+            log("  [DRY RUN] Would create searchable PDF")
         log("  [DRY RUN] Would classify and rename")
         return True
 
     try:
-        # Step 1: Run Yomitoku OCR
-        log("  Running Yomitoku OCR...")
-        ocr_result = run_yomitoku_ocr(pdf_path)
+        if skip_ocr:
+            log("  Skipping OCR (text layer assumed present)")
+        else:
+            # Step 1: Run Cloud Vision OCR
+            log("  Running Cloud Vision OCR...")
+            ocr_result = run_cloud_vision_ocr(pdf_path)
 
-        # Step 2: Create searchable PDF
-        log("  Creating searchable PDF...")
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp_pdf = Path(tmp.name)
-        create_searchable_pdf(pdf_path, ocr_result, tmp_pdf)
+            # Step 2: Create searchable PDF
+            log("  Creating searchable PDF...")
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp_pdf = Path(tmp.name)
+            create_searchable_pdf(pdf_path, ocr_result, tmp_pdf)
 
-        # Replace original with searchable version
-        shutil.copy2(tmp_pdf, pdf_path)
-        tmp_pdf.unlink()
-        log("  OCR text layer applied")
+            # Replace original with searchable version
+            shutil.copy2(tmp_pdf, pdf_path)
+            tmp_pdf.unlink()
+            log("  OCR text layer applied")
 
         # Step 3: Classify document
         log("  Classifying document...")
@@ -395,6 +405,8 @@ def main():
     parser = argparse.ArgumentParser(description="Process PDF with OCR Pipeline")
     parser.add_argument("pdf_path", help="Path to the PDF file")
     parser.add_argument("--dry-run", action="store_true", help="Show what would happen")
+    parser.add_argument("--skip-ocr", action="store_true",
+                        help="Skip OCR (for PDFs that already have a usable text layer)")
 
     args = parser.parse_args()
 
@@ -410,7 +422,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
 
-    success = process_pdf(pdf_path, args.dry_run)
+    success = process_pdf(pdf_path, args.dry_run, args.skip_ocr)
     sys.exit(0 if success else 1)
 
 
