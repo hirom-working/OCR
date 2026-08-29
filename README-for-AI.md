@@ -39,7 +39,6 @@
 | config.toml | 実行環境設定（.gitignore対象） |
 | config.example.toml | 設定テンプレート |
 | com.hirom.scansnap-watcher.plist | launchd 常駐監視設定 |
-| docker/ | 旧pgx01/pgx02向けDocker環境（2026-07-26運用終了、本リポジトリ非管理） |
 
 ## Operations
 | 操作 | コマンド |
@@ -64,3 +63,4 @@
 - yomitoku_local(オフラインフォールバックとして温存していたローカルuv venv構成)は2026-07-26付けで完全削除済み（launchd plist, ログ, venv一式2.3GB）。以後OCRはCloud Vision API必須、オフライン代替手段は無し
 - 稼働: Mac側ウォッチャー常駐 + Cloud Vision API（OCR）+ Gemini API（分類）、いずれもクラウド。ローカル常駐プロセスは無し
 - pgx01は全機能とも移設対象外で売却予定（OCR/分類ともクラウドAPI完結に切替済み、pgx01依存は解消済み）
+- 2026-08-30: `docker/`（旧pgx向け環境）、`process_batch.py`（リモートOCRサーバー時代の遺物、初回コミット以降未更新）、および無関係に混入していたペルソナ抽出作業（`hail_mary_*.txt`, `rocky-persona.md`, `extract_rocky_*.py`, `extract_bold.py`等）を削除して整理
